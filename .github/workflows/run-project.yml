@@ -1,0 +1,113 @@
+name: Run project
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Escolha o que será executado no runner temporário do GitHub Actions.
+        required: true
+        type: choice
+        options:
+          - "Aplicação + dependências"
+          - "Infraestrutura (Kafka + Redis)"
+          - "Projeto completo"
+        default: "Projeto completo"
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      RUN_SCOPE: ${{ inputs.scope }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        if: inputs.scope == 'Aplicação + dependências'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Start selected project components and verify them
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          app_pid=""
+          cleanup() {
+            if [[ -n "$app_pid" ]]; then
+              kill "$app_pid" 2>/dev/null || true
+              wait "$app_pid" 2>/dev/null || true
+            fi
+            docker compose logs --no-color || true
+            docker compose down --remove-orphans
+          }
+          trap cleanup EXIT
+
+          start_infrastructure() {
+            docker compose up -d kafka redis
+            for attempt in $(seq 1 60); do
+              if docker compose exec -T redis redis-cli ping 2>/dev/null | grep -q PONG \
+                && docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+                echo "Kafka and Redis are ready."
+                return
+              fi
+              sleep 2
+            done
+            echo "Kafka or Redis did not become ready in time." >&2
+            return 1
+          }
+
+          wait_for_app() {
+            for attempt in $(seq 1 60); do
+              if curl --fail --silent http://localhost:8080/actuator/health >/dev/null; then
+                echo "Application is healthy."
+                return
+              fi
+              sleep 2
+            done
+            echo "Application did not become healthy in time." >&2
+            return 1
+          }
+
+          verify_notification_api() {
+            response="$(curl --fail --silent --show-error \
+              -X POST http://localhost:8080/api/notifications \
+              -H 'Content-Type: application/json' \
+              -d '{"recipient":"actions@example.com","channel":"EMAIL","message":"GitHub Actions smoke test"}')"
+            echo "$response"
+            if [[ "$response" != *'"status":"PENDING"'* ]]; then
+              echo "Notification API returned an unexpected response." >&2
+              return 1
+            fi
+          }
+
+          case "$RUN_SCOPE" in
+            "Infraestrutura (Kafka + Redis)")
+              start_infrastructure
+              ;;
+            "Aplicação + dependências")
+              start_infrastructure
+              ./mvnw --batch-mode --no-transfer-progress package -DskipTests
+              java -jar target/event-driven-notification-processor-0.0.1-SNAPSHOT.jar &
+              app_pid=$!
+              wait_for_app
+              verify_notification_api
+              ;;
+            "Projeto completo")
+              docker compose up -d --build
+              wait_for_app
+              verify_notification_api
+              ;;
+            *)
+              echo "Unsupported run scope: $RUN_SCOPE" >&2
+              exit 1
+              ;;
+          esac
