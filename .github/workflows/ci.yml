@@ -1,29 +1,149 @@
-name: Java CI
+name: Notification Processor CI
 
 on:
   push:
-    branches: ["**"]
   pull_request:
-    branches: ["**"]
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: Escolha as etapas de validação que deseja executar
+        required: true
+        type: choice
+        default: todos-os-testes
+        options:
+          - testes-selecionados
+          - todos-os-testes
+          - testes-e-build
+      test_selector:
+        description: Classes ou métodos de teste Maven separados por vírgula
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
+  build:
+    name: "1. Construção e validação do projeto"
+    runs-on: ubuntu-24.04
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Baixando o código-fonte
+        uses: actions/checkout@v5
 
-      - name: Set up Java 21
-        uses: actions/setup-java@v4
+      - name: Configurando Java 21 e cache Maven
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
           cache: maven
 
-      - name: Build and test
-        run: bash ./mvnw --batch-mode --no-transfer-progress verify
+      - name: Validando configuração do projeto Maven
+        run: ./mvnw --batch-mode --no-transfer-progress validate
+
+      - name: Compilando código da aplicação e dos testes
+        run: ./mvnw --batch-mode --no-transfer-progress test-compile
+
+      - name: Empacotando a aplicação Spring Boot
+        if: github.event_name != 'workflow_dispatch' || inputs.execution_mode == 'testes-e-build'
+        run: ./mvnw --batch-mode --no-transfer-progress package -Dmaven.test.skip=true
+
+  tests:
+    name: "2. Testes automatizados"
+    needs: build
+    if: >-
+      ${{
+        needs.build.result == 'success' &&
+        (
+          github.event_name != 'workflow_dispatch' ||
+          inputs.execution_mode == 'testes-selecionados' ||
+          inputs.execution_mode == 'todos-os-testes' ||
+          inputs.execution_mode == 'testes-e-build'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Baixando o código-fonte
+        uses: actions/checkout@v5
+
+      - name: Configurando Java 21 e cache Maven
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Validando seleção de testes
+        if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'testes-selecionados'
+        env:
+          TEST_SELECTOR: ${{ inputs.test_selector }}
+        run: |
+          if [ -z "$TEST_SELECTOR" ]; then
+            echo "::error::Informe classes ou métodos Maven no campo test_selector."
+            exit 1
+          fi
+
+      - name: Executando testes selecionados
+        if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'testes-selecionados'
+        env:
+          TEST_SELECTOR: ${{ inputs.test_selector }}
+        run: ./mvnw --batch-mode --no-transfer-progress test "-Dtest=$TEST_SELECTOR"
+
+      - name: Executando todos os testes
+        if: github.event_name != 'workflow_dispatch' || inputs.execution_mode != 'testes-selecionados'
+        run: ./mvnw --batch-mode --no-transfer-progress test
+
+  acceptance:
+    name: "3. Teste de aceitação da aplicação com Kafka e Redis"
+    needs: [build, tests]
+    if: >-
+      ${{
+        always() &&
+        needs.build.result == 'success' &&
+        needs.tests.result == 'success' &&
+        (
+          github.event_name != 'workflow_dispatch' ||
+          inputs.execution_mode == 'testes-e-build'
+        )
+      }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Baixando o código-fonte
+        uses: actions/checkout@v5
+
+      - name: Construindo a imagem Docker da aplicação
+        run: docker compose build app
+
+      - name: Iniciando aplicação, Kafka e Redis no ambiente temporário
+        run: docker compose up -d
+
+      - name: Aguardando a API iniciar
+        run: |
+          set -euo pipefail
+
+          for attempt in {1..60}; do
+            if curl --fail --silent http://localhost:8080/actuator/health >/dev/null; then
+              echo "A API está disponível."
+              exit 0
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              docker compose logs app kafka redis
+              echo "::error::A API não ficou disponível a tempo."
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Validando publicação de uma notificação
+        run: |
+          set -euo pipefail
+
+          response=$(curl --fail --silent --show-error \
+            --request POST http://localhost:8080/api/notifications \
+            --header 'Content-Type: application/json' \
+            --data '{"recipient":"ci-acceptance@example.com","channel":"EMAIL","message":"GitHub Actions acceptance test"}')
+
+          echo "$response" | jq --exit-status '.status == "PENDING" and (.eventId | length > 0)'
+
+      - name: Encerrando o ambiente temporário
+        if: always()
+        run: docker compose down --volumes --remove-orphans
