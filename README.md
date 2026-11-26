@@ -78,13 +78,13 @@ docker compose down
 
 ## Executando pelo GitHub Actions
 
-No GitHub, abra **Actions > Run project > Run workflow** e escolha o escopo:
+O workflow **Notification Processor CI** valida automaticamente pushes e pull requests. Pela execução manual em **Actions > Notification Processor CI > Run workflow**, escolha o modo:
 
-- **Aplicação + dependências**: inicia Kafka e Redis, compila a aplicação e executa um teste HTTP da API.
-- **Infraestrutura (Kafka + Redis)**: inicia Kafka e Redis e verifica se ambos estão prontos.
-- **Projeto completo**: constrói e inicia a aplicação, Kafka e Redis com Docker Compose, depois testa a API.
+- `testes-selecionados`: executa apenas as classes ou métodos informados no campo `test_selector`.
+- `todos-os-testes`: executa toda a suíte automatizada.
+- `testes-e-build`: executa os testes, empacota a aplicação e executa um teste de aceitação com Kafka e Redis no Docker Compose.
 
-O workflow é manual e executa em um runner temporário. Os serviços são encerrados ao final do job; isso valida a execução, mas não deixa a aplicação hospedada continuamente.
+O workflow **Run project** também pode ser iniciado manualmente em **Actions > Run project > Run workflow** para executar somente a aplicação com dependências, somente Kafka e Redis, ou a stack completa. Os containers sobem apenas durante o job do GitHub Actions e são encerrados no final; isso valida a execução, mas não deixa a aplicação hospedada continuamente.
 
 ## Criando uma notificação
 
