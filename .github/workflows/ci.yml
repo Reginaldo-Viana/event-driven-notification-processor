@@ -38,14 +38,14 @@ jobs:
           cache: maven
 
       - name: Validando configuração do projeto Maven
-        run: ./mvnw --batch-mode --no-transfer-progress validate
+        run: bash ./mvnw --batch-mode --no-transfer-progress validate
 
       - name: Compilando código da aplicação e dos testes
-        run: ./mvnw --batch-mode --no-transfer-progress test-compile
+        run: bash ./mvnw --batch-mode --no-transfer-progress test-compile
 
       - name: Empacotando a aplicação Spring Boot
         if: github.event_name != 'workflow_dispatch' || inputs.execution_mode == 'testes-e-build'
-        run: ./mvnw --batch-mode --no-transfer-progress package -Dmaven.test.skip=true
+        run: bash ./mvnw --batch-mode --no-transfer-progress package -Dmaven.test.skip=true
 
   tests:
     name: "2. Testes automatizados"
@@ -86,11 +86,11 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.execution_mode == 'testes-selecionados'
         env:
           TEST_SELECTOR: ${{ inputs.test_selector }}
-        run: ./mvnw --batch-mode --no-transfer-progress test "-Dtest=$TEST_SELECTOR"
+        run: bash ./mvnw --batch-mode --no-transfer-progress test "-Dtest=$TEST_SELECTOR"
 
       - name: Executando todos os testes
         if: github.event_name != 'workflow_dispatch' || inputs.execution_mode != 'testes-selecionados'
-        run: ./mvnw --batch-mode --no-transfer-progress test
+        run: bash ./mvnw --batch-mode --no-transfer-progress test
 
   acceptance:
     name: "3. Teste de aceitação da aplicação com Kafka e Redis"
