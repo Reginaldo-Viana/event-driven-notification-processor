@@ -76,6 +76,16 @@ Para interromper e remover os containers:
 docker compose down
 ```
 
+## Executando pelo GitHub Actions
+
+No GitHub, abra **Actions > Run project > Run workflow** e escolha o escopo:
+
+- **Aplicação + dependências**: inicia Kafka e Redis, compila a aplicação e executa um teste HTTP da API.
+- **Infraestrutura (Kafka + Redis)**: inicia Kafka e Redis e verifica se ambos estão prontos.
+- **Projeto completo**: constrói e inicia a aplicação, Kafka e Redis com Docker Compose, depois testa a API.
+
+O workflow é manual e executa em um runner temporário. Os serviços são encerrados ao final do job; isso valida a execução, mas não deixa a aplicação hospedada continuamente.
+
 ## Criando uma notificação
 
 ```powershell
