@@ -86,6 +86,8 @@ O workflow **Notification Processor CI** valida automaticamente pushes e pull re
 
 O workflow **Run project** também pode ser iniciado manualmente em **Actions > Run project > Run workflow** para executar somente a aplicação com dependências, somente Kafka e Redis, ou a stack completa. Os containers sobem apenas durante o job do GitHub Actions e são encerrados no final; isso valida a execução, mas não deixa a aplicação hospedada continuamente.
 
+No teste de aceitação, `localhost:8080` é acessado pelo próprio runner do GitHub Actions através da porta publicada pelo Docker Compose. Esse endereço não fica exposto publicamente nem acessível do seu computador.
+
 ## Criando uma notificação
 
 ```powershell

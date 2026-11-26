@@ -137,12 +137,28 @@ jobs:
         run: |
           set -euo pipefail
 
-          response=$(curl --fail --silent --show-error \
+          response_file=$(mktemp)
+          http_status=$(curl --silent --show-error \
+            --output "$response_file" \
+            --write-out '%{http_code}' \
             --request POST http://localhost:8080/api/notifications \
             --header 'Content-Type: application/json' \
-            --data '{"recipient":"ci-acceptance@example.com","channel":"EMAIL","message":"GitHub Actions acceptance test"}')
+            --data '{"recipient":"ci-acceptance@example.com","channel":"EMAIL","message":"GitHub Actions acceptance test"}') || {
+              docker compose logs app kafka redis
+              cat "$response_file"
+              rm -f "$response_file"
+              exit 1
+            }
 
-          echo "$response" | jq --exit-status '.status == "PENDING" and (.eventId | length > 0)'
+          cat "$response_file"
+          if [ "$http_status" -lt 200 ] || [ "$http_status" -ge 300 ]; then
+            docker compose logs app kafka redis
+            echo "::error::A API respondeu HTTP $http_status."
+            rm -f "$response_file"
+            exit 1
+          fi
+          jq --exit-status '.status == "PENDING" and (.eventId | length > 0)' "$response_file"
+          rm -f "$response_file"
 
       - name: Encerrando o ambiente temporário
         if: always()
